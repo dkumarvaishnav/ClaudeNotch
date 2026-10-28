@@ -10,3 +10,6 @@ DerivedData/
 
 # macOS
 .DS_Store
+
+# Packaged disk images (attach them to GitHub Releases instead)
+dist/

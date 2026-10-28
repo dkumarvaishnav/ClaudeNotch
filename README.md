@@ -25,7 +25,17 @@ When a session finishes, fails or needs you, the notch pops open for 4 seconds a
 
 ## Install
 
-You need macOS 14 or later and the Xcode Command Line Tools (`xcode-select --install`). Full Xcode isn't needed.
+You need macOS 14 or later and [Claude Code](https://claude.com/claude-code) (desktop app or CLI).
+
+### Download
+
+1. Get `ClaudeNotch-<version>.dmg` from the [latest release](https://github.com/dkumarvaishnav/ClaudeNotch/releases/latest). It runs natively on Apple-silicon and Intel Macs.
+2. Open it and drag **ClaudeNotch** onto **Applications**.
+3. Open ClaudeNotch. The app isn't notarized by Apple yet, so the first time macOS says it can't verify it. Go to **System Settings → Privacy & Security**, click **Open Anyway** next to ClaudeNotch, and confirm. You only do this once.
+
+### Build from source
+
+You also need the Xcode Command Line Tools (`xcode-select --install`). Full Xcode isn't needed.
 
 ```bash
 git clone https://github.com/dkumarvaishnav/ClaudeNotch.git
@@ -33,9 +43,9 @@ cd ClaudeNotch
 ./build.sh --install
 ```
 
-This builds `ClaudeNotch.app` for your Mac's architecture, copies it to `~/Applications`, and starts it. The app is ad-hoc signed, not notarized, because it is built on your machine. Right-click the notch → **Launch at Login** to keep it running.
+This builds `ClaudeNotch.app` for your Mac, copies it to `~/Applications`, and starts it.
 
-On first launch ClaudeNotch asks whether it may add its hooks to `~/.claude/settings.json` (see below). Without them you can still watch every session; you just answer requests in Claude Code itself.
+Either way, right-click the notch → **Launch at Login** to keep it running. On first launch ClaudeNotch asks whether it may add its hooks to `~/.claude/settings.json` (see below). Without them you can still watch every session; you just answer requests in Claude Code itself.
 
 ## Use it
 
@@ -89,8 +99,17 @@ If you delete the app without step 1, the hooks stay in `settings.json`. They do
 ```bash
 swift build      # debug build (app + helper)
 swift test       # unit tests: settings.json editing, transcript parsing, request details
+./package.sh     # dist/ClaudeNotch-<version>.dmg: universal (Apple silicon + Intel), ad-hoc signed
 swift tools/make-icon.swift   # redraw Resources/AppIcon.icns
 ```
+
+With an Apple Developer ID, `package.sh` can also sign and notarize the disk image, so it opens without any warning. Run `xcrun notarytool store-credentials` once, then pass the certificate and profile (see the top of `package.sh`):
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=claudenotch ./package.sh
+```
+
+The version comes from `CFBundleShortVersionString` in `Resources/Info.plist`.
 
 Debug builds have test tools that release builds leave out:
 
