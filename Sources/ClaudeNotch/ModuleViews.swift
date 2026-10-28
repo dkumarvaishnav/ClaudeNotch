@@ -36,6 +36,19 @@ struct PanelHeader: View {
                 }
                 Spacer(minLength: 0)
             }
+            // One highlight behind the tabs that slides to the selected one (instead of one per tab
+            // switching on and off), and the tabs' widths ease as the label moves with it.
+            .backgroundPreferenceValue(TabFrames.self) { frames in
+                GeometryReader { geo in
+                    if let anchor = frames[selectedTab ?? .claude], selectedTab != nil {
+                        let r = geo[anchor]
+                        Capsule().fill(Color.white.opacity(0.12))
+                            .frame(width: r.width, height: r.height)
+                            .offset(x: r.minX, y: r.minY)
+                    }
+                }
+            }
+            .animation(.spring(response: 0.28, dampingFraction: 0.92), value: selectedTab)
             .padding(.leading, 16)
             .frame(width: side)
 
@@ -44,6 +57,8 @@ struct PanelHeader: View {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
                 tools
+                    .id(selectedTab)
+                    .transition(.opacity.animation(.easeOut(duration: 0.15)))
                 Button { model.actions?.showMenu() } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 12, weight: .bold))
@@ -58,26 +73,49 @@ struct PanelHeader: View {
         }
     }
 
+    /// The tab that's showing (none while a pop-up is up).
+    private var selectedTab: NotchModel.Tab? {
+        model.mode == .peek || model.mode == .timerPeek ? nil : model.tab
+    }
+
     /// The active tab shows its name; the others are just an icon.
     private func tab<Icon: View>(_ tab: NotchModel.Tab, _ title: String, @ViewBuilder icon: () -> Icon) -> some View {
-        let active = model.tab == tab && model.mode != .peek && model.mode != .timerPeek
+        let active = selectedTab == tab
         return Button { model.actions?.select(tab) } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 0) {
                 icon()
-                if active {
-                    Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.92)).fixedSize()
-                }
-                if tab == .shelf, !shelf.items.isEmpty, !active {
-                    Text("\(shelf.items.count)").font(.system(size: 10, weight: .bold).monospacedDigit()).foregroundStyle(.white.opacity(0.6))
+                // Labels are never added or removed (an added one appears at its final spot while the
+                // icon is still sliding there). Their width animates between 0 and the measured width,
+                // clipped, so the selected tab's name wipes open together with the sliding highlight.
+                reveal(Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.92)),
+                       width: Self.width(title, size: 12, weight: .semibold), shown: active)
+                if tab == .shelf, !shelf.items.isEmpty {
+                    let count = "\(shelf.items.count)"
+                    reveal(Text(count).font(.system(size: 10, weight: .bold).monospacedDigit()).foregroundStyle(.white.opacity(0.6)),
+                           width: Self.width(count, size: 10, weight: .bold), shown: !active)
                 }
             }
             .padding(.horizontal, active ? 9 : 6)
             .frame(height: 24)
-            .background(Capsule().fill(Color.white.opacity(active ? 0.12 : 0)))
+            .clipped() // while the tab widens, its label is uncovered with it rather than spilling out
             .contentShape(Capsule())
+            .anchorPreference(key: TabFrames.self, value: .bounds) { [tab: $0] }
         }
         .buttonStyle(.plain)
         .help(title)
+    }
+
+    private func reveal<Label: View>(_ label: Label, width: CGFloat, shown: Bool) -> some View {
+        label
+            .fixedSize()
+            .frame(width: shown ? width : 0, alignment: .leading)
+            .clipped()
+            .opacity(shown ? 1 : 0)
+            .padding(.leading, shown ? 5 : 0)
+    }
+
+    private static func width(_ text: String, size: CGFloat, weight: NSFont.Weight) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: weight)]).width) + 1
     }
 
     @ViewBuilder private var tools: some View {
@@ -92,6 +130,14 @@ struct PanelHeader: View {
         case .shelf:
             if !shelf.items.isEmpty { SmallButton(title: "Clear", help: "Empty the shelf") { shelf.clear() } }
         }
+    }
+}
+
+/// Where each tab sits, so the highlight can slide between them.
+struct TabFrames: PreferenceKey {
+    static let defaultValue: [NotchModel.Tab: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [NotchModel.Tab: Anchor<CGRect>], nextValue: () -> [NotchModel.Tab: Anchor<CGRect>]) {
+        value.merge(nextValue()) { $1 }
     }
 }
 

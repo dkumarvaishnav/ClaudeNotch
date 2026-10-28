@@ -130,7 +130,7 @@ final class NotchController: NotchActions {
         container.onDragTarget = { [weak self] targeted in
             guard let self else { return }
             self.model.dropTargeted = targeted
-            if targeted, self.model.tab != .shelf { self.model.tab = .shelf }
+            if targeted, self.model.tab != .shelf { self.select(.shelf) }
         }
         container.onDrop = { [weak self] pasteboard in self?.drop(pasteboard) ?? false }
 
@@ -158,7 +158,8 @@ final class NotchController: NotchActions {
     private func reshape(mode: NotchModel.Mode, sessions: [ClaudeSession], animated: Bool) {
         let size = model.bodySize(sessions, mode: mode)
         guard size != shownSize || !animated else { return }
-        let opening = size.width * size.height > shownSize.width * shownSize.height
+        // The little bounce is for the notch opening from closed; resizing between pages just glides.
+        let opening = shownSize.height <= model.notchHeight + 1 && size.height > shownSize.height
         shownSize = size
         let bounds = container.bounds
         let body = CGRect(x: (bounds.width - size.width) / 2, y: bounds.height - size.height, width: size.width, height: size.height)
@@ -274,8 +275,7 @@ final class NotchController: NotchActions {
 
     func openForDrop() {
         guard detailID == nil else { return }
-        model.tab = .shelf
-        model.mode = .expanded
+        select(.shelf)
         leaveStart = nil
         peekUntil = nil
     }
@@ -295,6 +295,7 @@ final class NotchController: NotchActions {
 
     func open() {
         guard model.mode != .expanded else { return }
+        model.tabMove = 0
         model.mode = .expanded
         leaveStart = nil
         peekUntil = nil
@@ -304,6 +305,7 @@ final class NotchController: NotchActions {
     func peekTimer(_ event: TimerStore.Finish) {
         guard [.collapsed, .peek, .timerPeek].contains(model.mode) else { return }
         model.timerEvent = event
+        model.tabMove = 0
         model.mode = .timerPeek
         peekUntil = Date().addingTimeInterval(Self.peekDuration)
         peekArmed = !bodyRect.insetBy(dx: -8, dy: -8).contains(NSEvent.mouseLocation)
@@ -312,6 +314,7 @@ final class NotchController: NotchActions {
 
     func peek() {
         guard model.mode == .collapsed || model.mode == .peek else { return }
+        model.tabMove = 0
         model.mode = .peek
         peekUntil = Date().addingTimeInterval(Self.peekDuration)
         peekArmed = !bodyRect.insetBy(dx: -8, dy: -8).contains(NSEvent.mouseLocation)
@@ -347,6 +350,7 @@ final class NotchController: NotchActions {
             previousApp = front?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : front
         }
         model.resetInput()
+        model.tabMove = 0
         model.mode = .detail(s.id)
         // Become key so you can type; give focus back when the detail closes.
         panel.allowsKey = true
@@ -356,6 +360,7 @@ final class NotchController: NotchActions {
 
     func back() {
         leaveDetail(restoreFocus: true)
+        model.tabMove = 0
         model.mode = .expanded
         leaveStart = nil
     }
@@ -408,6 +413,8 @@ final class NotchController: NotchActions {
     }
 
     func select(_ tab: NotchModel.Tab) {
+        // Which way the page slides: only between tabs, not when coming from a pop-up or a detail.
+        model.tabMove = model.mode == .expanded ? CGFloat((tab.order - model.tab.order).signum()) : 0
         model.tab = tab
         if model.mode != .expanded { model.mode = .expanded; leaveStart = nil; peekUntil = nil }
     }

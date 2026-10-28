@@ -40,10 +40,15 @@ protocol NotchActions: AnyObject {
 
 final class NotchModel: ObservableObject {
     enum Mode: Equatable { case collapsed, peek, timerPeek, expanded, detail(String) }
-    enum Tab: String { case claude, timer, shelf }
+    enum Tab: String {
+        case claude, timer, shelf
+        var order: Int { self == .claude ? 0 : self == .timer ? 1 : 2 }
+    }
 
     @Published var mode: Mode = .collapsed
     @Published var tab: Tab = .claude
+    /// −1, 0 or 1: which way the last tab switch went, so the new page slides in from that side.
+    @Published var tabMove: CGFloat = 0
     @Published var dropTargeted = false              // a drag is over the open shelf
     @Published var timerEvent: TimerStore.Finish?    // what the timer pop-up is about
     @Published var hoveredRow: String?
@@ -455,45 +460,13 @@ struct NotchRootView: View {
                     .fill(Color.black)
                     .frame(width: size.width + 2 * model.topRadius, height: size.height)
             }
-            switch model.mode {
-            case .collapsed:
+            if model.mode == .collapsed {
                 CollapsedContent(model: model, timer: timer, sessions: sessions)
                     .frame(width: size.width, height: size.height, alignment: .top)
                     .transition(.notchEars)
-            case .timerPeek:
-                VStack(spacing: 0) {
-                    PanelHeader(model: model, timer: timer, shelf: shelf, sessions: sessions).frame(height: model.bandHeight)
-                    TimerPeekCard(model: model, timer: timer)
-                }
-                .frame(width: size.width, height: size.height, alignment: .top)
-                .transition(.notchPanel)
-            case .peek:
-                OpenContent(model: model, sessions: NotchModel.peekList(sessions), all: sessions)
-                    .frame(width: size.width, height: size.height, alignment: .top)
-                    .transition(.notchPanel)
-            case .expanded:
-                switch model.tab {
-                case .claude:
-                    OpenContent(model: model, sessions: sessions, all: sessions)
-                        .frame(width: size.width, height: size.height, alignment: .top)
-                        .transition(.notchPanel)
-                case .timer:
-                    VStack(spacing: 0) {
-                        PanelHeader(model: model, timer: timer, shelf: shelf, sessions: sessions).frame(height: model.bandHeight)
-                        TimerPage(model: model, timer: timer)
-                    }
-                    .frame(width: size.width, height: size.height, alignment: .top)
-                    .transition(.notchPanel)
-                case .shelf:
-                    VStack(spacing: 0) {
-                        PanelHeader(model: model, timer: timer, shelf: shelf, sessions: sessions).frame(height: model.bandHeight)
-                        ShelfPage(model: model, shelf: shelf)
-                    }
-                    .frame(width: size.width, height: size.height, alignment: .top)
-                    .transition(.notchPanel)
-                }
-            case .detail(let id):
-                DetailContent(model: model, session: sessions.first { $0.id == id })
+            } else {
+                // One open panel for every open state, so its tab bar stays put while pages change below it.
+                OpenPanel(model: model, timer: timer, shelf: shelf, sessions: sessions, size: size)
                     .frame(width: size.width, height: size.height, alignment: .top)
                     .transition(.notchPanel)
             }
@@ -511,6 +484,15 @@ extension AnyTransition {
             insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
                 .animation(.easeOut(duration: 0.16)),
             removal: .opacity.animation(.easeIn(duration: 0.07)))
+    }
+
+    /// A page inside the open panel (tab, detail, pop-up): the old one fades out at once, the new one fades
+    /// in just after, sliding a little from the side you moved to, so the two never overlap.
+    static func notchPage(_ move: CGFloat) -> AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: 16 * move))
+                .animation(.smooth(duration: 0.26).delay(0.05)),
+            removal: .opacity.animation(.easeOut(duration: 0.07)))
     }
 
     /// The ears beside the notch: back once the box has nearly closed.
@@ -571,14 +553,68 @@ struct CollapsedContent: View {
 
 // MARK: - Open: header band + session list
 
-struct OpenContent: View {
+/// Everything shown while the notch is open: the tab bar (except on a session's detail, which has its
+/// own) and, below it, the current page.
+struct OpenPanel: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var timer: TimerStore
+    @ObservedObject var shelf: ShelfStore
+    let sessions: [ClaudeSession]
+    let size: CGSize
+
+    var body: some View {
+        let detail: String? = { if case .detail(let id) = model.mode { return id } else { return nil } }()
+        let pageHeight = size.height - (detail == nil ? model.bandHeight : 0)
+        VStack(spacing: 0) {
+            if detail == nil {
+                PanelHeader(model: model, timer: timer, shelf: shelf, sessions: sessions)
+                    .frame(height: model.bandHeight)
+                    .transition(.opacity.animation(.easeOut(duration: 0.12)))
+            }
+            ZStack(alignment: .top) {
+                page(detail)
+                    .frame(width: size.width, height: pageHeight, alignment: .top)
+                    .id(pageKey(detail))
+                    .transition(.notchPage(model.tabMove))
+            }
+            .frame(width: size.width, alignment: .top)
+        }
+    }
+
+    private func pageKey(_ detail: String?) -> String {
+        if let detail { return "detail-" + detail }
+        switch model.mode {
+        case .peek: return "peek"
+        case .timerPeek: return "timer-peek"
+        default: return "tab-" + model.tab.rawValue
+        }
+    }
+
+    @ViewBuilder private func page(_ detail: String?) -> some View {
+        if let detail {
+            DetailContent(model: model, session: sessions.first { $0.id == detail })
+        } else {
+            switch model.mode {
+            case .peek: ClaudeList(model: model, sessions: NotchModel.peekList(sessions))
+            case .timerPeek: TimerPeekCard(model: model, timer: timer)
+            default:
+                switch model.tab {
+                case .claude: ClaudeList(model: model, sessions: sessions)
+                case .timer: TimerPage(model: model, timer: timer)
+                case .shelf: ShelfPage(model: model, shelf: shelf)
+                }
+            }
+        }
+    }
+}
+
+/// The session rows (the tab bar above them belongs to OpenPanel).
+struct ClaudeList: View {
     @ObservedObject var model: NotchModel
     let sessions: [ClaudeSession]
-    let all: [ClaudeSession]
 
     var body: some View {
         VStack(spacing: 0) {
-            header.frame(height: model.bandHeight)
             if sessions.isEmpty {
                 EmptyRow { model.actions?.newSession() }
                     .frame(height: NotchModel.rowHeight)
@@ -609,9 +645,6 @@ struct OpenContent: View {
         }
     }
 
-    private var header: some View {
-        PanelHeader(model: model, timer: model.timer, shelf: model.shelf, sessions: all)
-    }
 }
 
 /// "● 1  ● 2  ● 1" — how many sessions are in each state, in their colours.

@@ -93,7 +93,20 @@ enum DebugHooks {
                     WindowShot.capture(c.panel, to: String(command.dropFirst(5)))
                     NSLog("ClaudeNotch debug: shot \(command.dropFirst(5)) mode=\(c.model.mode)")
                 } else if command == "measure", let c = all.first {
-                    FrameProbe.run(on: c, open: c.model.mode == .collapsed)
+                    FrameProbe.run(on: c) { c.model.mode == .collapsed ? c.open() : c.collapse() }
+                } else if command.hasPrefix("measure-tab:"), let c = all.first {
+                    let tab = NotchModel.Tab(rawValue: String(command.dropFirst(12))) ?? .claude
+                    FrameProbe.run(on: c) { c.select(tab) }
+                } else if command.hasPrefix("film-tab:"), let c = all.first {
+                    // film-tab:<dir>,<tab>: window-server frames every 20 ms while switching tabs.
+                    let parts = command.dropFirst(9).split(separator: ",").map(String.init)
+                    guard parts.count == 2, let tab = NotchModel.Tab(rawValue: parts[1]) else { return }
+                    for i in 0..<24 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.02) {
+                            if i == 1 { c.select(tab) }
+                            WindowShot.capture(c.panel, to: "\(parts[0])/f-\(String(format: "%02d", i)).png")
+                        }
+                    }
                 } else if command.hasPrefix("capture:") {
                     let prefix = String(command.dropFirst("capture:".count))
                     for (i, c) in all.enumerated() {
@@ -136,8 +149,9 @@ final class FrameProbe: NSObject {
     private var samples: [(t: CFTimeInterval, h: CGFloat)] = []
     private weak var layer: CAShapeLayer?
     private var start: CFTimeInterval = 0
+    var actionCost: Double = 0
 
-    static func run(on controller: NotchController, open: Bool) {
+    static func run(on controller: NotchController, action: @escaping () -> Void) {
         let probe = FrameProbe()
         probe.layer = controller.debugShapeLayer
         current = probe
@@ -146,7 +160,11 @@ final class FrameProbe: NSObject {
         link.add(to: .main, forMode: .common)
         probe.link = link
         probe.start = CACurrentMediaTime()
-        if open { controller.open() } else { controller.collapse() }
+        DispatchQueue.main.async {
+            let before = CACurrentMediaTime()
+            action()
+            probe.actionCost = (CACurrentMediaTime() - before) * 1000
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { probe.finish() }
     }
 
@@ -162,7 +180,9 @@ final class FrameProbe: NSObject {
         let heights = samples.map { String(format: "%.0f", $0.h) }.joined(separator: " ")
         NSLog("ClaudeNotch probe: \(samples.count) frames, avg %.1f ms (%.0f fps), max gap %.1f ms", avg, avg > 0 ? 1000 / avg : 0, gaps.max() ?? 0)
         NSLog("ClaudeNotch probe heights: \(heights)")
-        NSLog("ClaudeNotch probe screen max fps: \(NSScreen.main?.maximumFramesPerSecond ?? 0)")
+        NSLog("ClaudeNotch probe screen max fps: \(NSScreen.main?.maximumFramesPerSecond ?? 0), action took %.1f ms", actionCost)
+        let slow = gaps.enumerated().filter { $0.element > 12 }.map { String(format: "#%d %.1fms", $0.offset, $0.element) }
+        NSLog("ClaudeNotch probe main-thread stalls: \(slow.isEmpty ? "none" : slow.joined(separator: ", "))")
         FrameProbe.current = nil
     }
 }
