@@ -25,7 +25,9 @@ final class ShelfStore: ObservableObject {
             switch content {
             case .file(let url): return url.lastPathComponent
             case .text(let text): return text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: .newlines).first ?? text
-            case .link(let url): return url.host ?? url.absoluteString
+            case .link(let url):
+                let host = url.host ?? url.absoluteString
+                return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
             }
         }
 

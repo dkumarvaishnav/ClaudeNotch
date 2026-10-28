@@ -70,6 +70,15 @@ enum DebugHooks {
                 } else if command.hasPrefix("reply:") {
                     let s = store.sessions.first { $0.canReply }
                     NSLog("reply → \(s.map { app.reply($0, text: String(command.dropFirst(6))) } ?? false)")
+                } else if command.hasPrefix("record:"), let c = all.first {
+                    // record:<dir>,<frames>,<ms> — window-server frames at a steady pace, for demo GIFs.
+                    let parts = command.dropFirst(7).split(separator: ",").map(String.init)
+                    guard parts.count == 3, let frames = Int(parts[1]), let ms = Double(parts[2]) else { return }
+                    for i in 0..<frames {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * ms / 1000) {
+                            WindowShot.capture(c.panel, to: "\(parts[0])/frame-\(String(format: "%04d", i)).png")
+                        }
+                    }
                 } else if command.hasPrefix("film:"), let c = all.first {
                     // What the window server actually shows, frame by frame, while the notch opens or closes.
                     let parts = command.dropFirst(5).split(separator: ",")

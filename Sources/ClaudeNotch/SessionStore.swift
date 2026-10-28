@@ -28,6 +28,12 @@ final class SessionStore: ObservableObject {
     private var primed = false
 
     private static let acksKey = "acknowledged"
+    #if DEBUG
+    /// A debug build on a fake ~/.claude shows only the fake sessions, never real ones reaching it via hooks.
+    private static let fakeHome = ProcessInfo.processInfo.environment["CLAUDENOTCH_HOME"] != nil
+    #else
+    private static let fakeHome = false
+    #endif
     /// On first sight, anything that finished longer ago than this counts as already seen.
     private static let freshWindow: TimeInterval = 15 * 60
 
@@ -120,7 +126,7 @@ final class SessionStore: ObservableObject {
 
         // Sessions we only know from hooks (e.g. `claude -p`, Agent SDK apps).
         let known = Set(found.map(\.id))
-        for (sid, info) in hooks where !known.contains(sid) {
+        for (sid, info) in hooks where !known.contains(sid) && !Self.fakeHome {
             guard !info.permissions.isEmpty || info.replyWaiting || Date().timeIntervalSince(info.lastEventAt) < 600 else { continue }
             let ended = [info.lastStop?.at, info.lastFailure?.at].compactMap { $0 }.max()
             let busy = info.lastPromptAt.map { prompt in ended.map { prompt > $0 } ?? true } ?? false

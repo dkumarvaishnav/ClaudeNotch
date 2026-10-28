@@ -494,10 +494,10 @@ struct ShelfTile: View {
             Text(item.title)
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(isText ? 2 : 1)
-                .truncationMode(isText ? .tail : .middle) // "ClaudeN…0.1.0.dmg" keeps the extension
+                .lineLimit(2)
+                .truncationMode(isText ? .tail : .middle) // long file names keep their extension
                 .multilineTextAlignment(.center)
-                .frame(height: 26, alignment: isText ? .top : .center)
+                .frame(height: 26, alignment: .center)
             Text(copied ? "Copied" : item.kindLabel)
                 .font(.system(size: 9.5, weight: copied ? .bold : .regular))
                 .foregroundStyle(copied ? Palette.green : .white.opacity(0.4))
@@ -505,7 +505,7 @@ struct ShelfTile: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 7)
-        .frame(width: 92, height: 112)
+        .frame(width: 100, height: 112)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(hovering ? 0.12 : 0.06)))
         .overlay(alignment: .topTrailing) {
             if hovering {

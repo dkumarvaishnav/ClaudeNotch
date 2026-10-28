@@ -1,10 +1,47 @@
-# ClaudeNotch
+<p align="center">
+  <img src="docs/icon.png" width="112" alt="ClaudeNotch icon">
+</p>
 
-Your Claude Code sessions in the MacBook notch: see them, approve them, answer them, and tell them what to do next, from any app or screen. Plus a timer, Pomodoro, and a shelf for carrying files and text between apps and Spaces. Inspired by [TwoCode](https://github.com/levon-z/TwoCode) (a Dynamic Island for Windows), rebuilt natively for macOS.
+<h1 align="center">ClaudeNotch</h1>
 
-It floats above the menu bar on every Space, over full-screen apps, and on every display (screens without a notch get a virtual one). Opening and closing run as Core Animation springs in the render server, at 120 fps on ProMotion displays.
+<p align="center">
+  <b>Claude Code, a timer, Pomodoro and a shelf, living in your MacBook's notch.</b><br>
+  Watch and answer every Claude Code session, time your focus, and carry files between apps and Spaces, without leaving what you're doing.
+</p>
 
-![The open notch with five sessions: one needs a reply, one failed, one is done, one is working, one is idle](docs/list.png)
+<p align="center">
+  <a href="https://github.com/dkumarvaishnav/ClaudeNotch/releases/latest"><img src="https://img.shields.io/github/v/release/dkumarvaishnav/ClaudeNotch?label=Download&color=D97757&style=for-the-badge" alt="Download the latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-14%2B-3a3a3c?style=for-the-badge&logo=apple" alt="macOS 14 or later">
+  <img src="https://img.shields.io/badge/Apple%20silicon%20%2B%20Intel-native-3a3a3c?style=for-the-badge" alt="Native on Apple silicon and Intel">
+</p>
+
+<p align="center">
+  <img src="docs/demo.gif" width="800" alt="The notch opening, then switching between the Claude, Timer and Shelf tabs">
+</p>
+
+<table>
+  <tr>
+    <th width="33%">Claude Code</th>
+    <th width="33%">Timer &amp; Pomodoro</th>
+    <th width="33%">Shelf</th>
+  </tr>
+  <tr>
+    <td><img src="docs/tab-claude.png" alt="Claude tab: five sessions, one asking to deploy with Deny and Allow buttons"></td>
+    <td><img src="docs/tab-timer.png" alt="Timer tab: Pomodoro focus round 2 of 4"></td>
+    <td><img src="docs/tab-shelf.png" alt="Shelf tab: an image, a PDF, a CSV, a link and a note"></td>
+  </tr>
+  <tr>
+    <td>Every session, colour-coded. Allow or deny requests, answer Claude's questions and reply, right from the notch.</td>
+    <td>Quick timers and 25 / 5 Pomodoro rounds, counting down beside the notch with a chime at the end.</td>
+    <td>Drop files, images, links or text on the notch, then take them to another app or Space.</td>
+  </tr>
+</table>
+
+It floats above the menu bar on every Space, over full-screen apps, and on every display (screens without a notch get a virtual one). Opening and closing are Core Animation springs at 120 fps on ProMotion displays, and it uses about 0.5% CPU when idle.
+
+## Claude Code
+
+Every Claude Code session on your Mac, desktop app or terminal, with what it's doing right now. Inspired by [TwoCode](https://github.com/levon-z/TwoCode) (a Dynamic Island for Windows), rebuilt natively for macOS.
 
 | | |
 | --- | --- |
@@ -23,20 +60,23 @@ It floats above the menu bar on every Space, over full-screen apps, and on every
 
 When a session finishes, fails or needs you, the notch pops open for 4 seconds and folds back by itself. The coloured dot stays, so you can walk away and still see it from across the room. Hovering doesn't clear colours either. A session goes grey once you open it, reply, click ✕ / **Mark as seen** / **Clear**, or start a new turn.
 
-## Timer, Pomodoro and the shelf
-
-The open notch has three tabs: **Claude**, **Timer** and **Shelf**.
+## Timer and Pomodoro
 
 | | |
 | --- | --- |
 | ![timer](docs/timer.png) | **Timer.** Pick a preset or nudge it with − / +, then Start. Pause, resume or reset any time. |
 | ![pomodoro](docs/pomodoro.png) | **Pomodoro.** 25 min focus, 5 min break, a 15 min break after 4 rounds. Breaks start by themselves; the next focus round waits for you. **Done early** and **Skip break** move on. |
 | ![countdown](docs/ear-timer.png) | **Beside the notch.** While a countdown runs, it sits to the left of the notch (blue for focus, mint for breaks) and your session dots stay on the right. When it ends you hear a chime and get a 4-second pop-up. |
-| ![shelf](docs/shelf.png) | **Shelf.** Drag files, images, links or text onto the notch from any app; it opens as a drop target. Switch Space or app, then drag them back out, or click one to copy it. **Paste** adds what you copied last. Files stay where they are (the shelf keeps a reference), and the shelf empties when ClaudeNotch quits. |
-
-**Clipboard history** (the **History** button, off by default) adds everything you copy to the shelf. macOS asks before an app reads what you copy, so it only records once you set ClaudeNotch to **Allow** under **System Settings → Privacy & Security → Paste from Other Apps**. The **Allow…** button takes you there. Items that password managers mark as private are never recorded.
 
 Timers survive a restart of the app; a countdown that ran out while it was closed just ends.
+
+## Shelf
+
+![shelf](docs/shelf.png)
+
+Drag files, images, links or text onto the notch from any app; it opens as a drop target. Switch Space or app, then drag them back out, or click one to copy it. **Paste** adds what you copied last. Files stay where they are (the shelf keeps a reference), and the shelf empties when ClaudeNotch quits.
+
+**Clipboard history** (the **History** button, off by default) adds everything you copy to the shelf. macOS asks before an app reads what you copy, so it only records once you set ClaudeNotch to **Allow** under **System Settings → Privacy & Security → Paste from Other Apps**. The **Allow…** button takes you there. Items that password managers mark as private are never recorded.
 
 ## Install
 
