@@ -33,14 +33,19 @@ protocol NotchActions: AnyObject {
     func clearAll()
     func newSession()
     func showMenu()
+    func select(_ tab: NotchModel.Tab)
 }
 
 // MARK: - Model (one per display)
 
 final class NotchModel: ObservableObject {
-    enum Mode: Equatable { case collapsed, peek, expanded, detail(String) }
+    enum Mode: Equatable { case collapsed, peek, timerPeek, expanded, detail(String) }
+    enum Tab: String { case claude, timer, shelf }
 
     @Published var mode: Mode = .collapsed
+    @Published var tab: Tab = .claude
+    @Published var dropTargeted = false              // a drag is over the open shelf
+    @Published var timerEvent: TimerStore.Finish?    // what the timer pop-up is about
     @Published var hoveredRow: String?
     // Detail view input.
     @Published var draft = ""
@@ -57,6 +62,8 @@ final class NotchModel: ObservableObject {
     let hasNotch: Bool
     let notchWidth: CGFloat
     let notchHeight: CGFloat
+    let timer: TimerStore
+    let shelf: ShelfStore
 
     static let rowHeight: CGFloat = 52
     static let maxRows = 7
@@ -64,16 +71,20 @@ final class NotchModel: ObservableObject {
     static let listPadding: CGFloat = 8
     static let maxDots = 4
     static let detailHeight: CGFloat = 520
+    static let timerHeight: CGFloat = 214
+    static let timerPeekHeight: CGFloat = 62
 
-    init(hasNotch: Bool, notchWidth: CGFloat, notchHeight: CGFloat) {
+    init(hasNotch: Bool, notchWidth: CGFloat, notchHeight: CGFloat, timer: TimerStore, shelf: ShelfStore) {
         self.hasNotch = hasNotch
         self.notchWidth = notchWidth
         self.notchHeight = notchHeight
+        self.timer = timer
+        self.shelf = shelf
     }
 
     var isOpen: Bool { mode != .collapsed }
     var bandHeight: CGFloat { max(notchHeight, 32) }
-    var openWidth: CGFloat { max(580, notchWidth + 360) }
+    var openWidth: CGFloat { max(620, notchWidth + 400) }
     var topRadius: CGFloat { isOpen ? 14 : 7 }
 
     /// A request's buttons work only after it has been visible for a moment, like macOS security
@@ -104,24 +115,40 @@ final class NotchModel: ObservableObject {
         Array(sessions.filter(\.needsAttention).sorted { $0.statusSince > $1.statusSince }.prefix(maxPeekRows))
     }
 
+    /// A running timer (or a Pomodoro waiting for its next round) shows beside the notch.
+    var timerInEar: Bool { timer.isActive || timer.awaitingFocus }
+
     func earWidth(_ sessions: [ClaudeSession]) -> CGFloat {
         let dots = min(sessions.filter { $0.state != .idle }.count, Self.maxDots)
         let right: CGFloat = dots == 0 ? 30 : 20 + CGFloat(dots) * 6 + CGFloat(dots - 1) * 4
-        return max(36, right)
+        // The countdown's width is fixed per format ("24:13" or "1:02:03") so the ears never jitter.
+        let left: CGFloat = !timerInEar ? 0 : !timer.isActive ? 70 : timer.duration >= 3600 ? 88 : 72
+        return max(36, right, left)
     }
+
+    var shelfHeight: CGFloat { 172 + (shelf.historyOn && !shelf.historyAllowed ? 34 : 0) }
 
     /// Size of the black body (without the flared top corners).
     func bodySize(_ sessions: [ClaudeSession], mode: Mode? = nil) -> CGSize {
         switch mode ?? self.mode {
         case .collapsed:
-            if sessions.isEmpty { return CGSize(width: hasNotch ? notchWidth : 0, height: notchHeight) }
+            if sessions.isEmpty && !timerInEar { return CGSize(width: hasNotch ? notchWidth : 0, height: notchHeight) }
             return CGSize(width: notchWidth + 2 * earWidth(sessions), height: notchHeight)
+        case .timerPeek:
+            return CGSize(width: openWidth, height: bandHeight + Self.timerPeekHeight)
         case .peek:
             let rows = max(1, Self.peekList(sessions).count)
             return CGSize(width: openWidth, height: bandHeight + CGFloat(rows) * Self.rowHeight + 2 * Self.listPadding)
         case .expanded:
-            let rows = max(1, min(sessions.count, Self.maxRows))
-            return CGSize(width: openWidth, height: bandHeight + CGFloat(rows) * Self.rowHeight + 2 * Self.listPadding)
+            switch tab {
+            case .claude:
+                let rows = max(1, min(sessions.count, Self.maxRows))
+                return CGSize(width: openWidth, height: bandHeight + CGFloat(rows) * Self.rowHeight + 2 * Self.listPadding)
+            case .timer:
+                return CGSize(width: openWidth, height: bandHeight + (timer.page == .pomodoro ? Self.timerHeight : Self.timerHeight - 30))
+            case .shelf:
+                return CGSize(width: openWidth, height: bandHeight + shelfHeight)
+            }
         case .detail(let id):
             return CGSize(width: openWidth, height: detailHeight(sessions.first { $0.id == id }))
         }
@@ -416,6 +443,8 @@ struct PillButton: View {
 struct NotchRootView: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var model: NotchModel
+    @ObservedObject var timer: TimerStore
+    @ObservedObject var shelf: ShelfStore
 
     var body: some View {
         let sessions = store.sessions
@@ -428,17 +457,41 @@ struct NotchRootView: View {
             }
             switch model.mode {
             case .collapsed:
-                CollapsedContent(model: model, sessions: sessions)
+                CollapsedContent(model: model, timer: timer, sessions: sessions)
                     .frame(width: size.width, height: size.height, alignment: .top)
                     .transition(.notchEars)
+            case .timerPeek:
+                VStack(spacing: 0) {
+                    PanelHeader(model: model, timer: timer, shelf: shelf, sessions: sessions).frame(height: model.bandHeight)
+                    TimerPeekCard(model: model, timer: timer)
+                }
+                .frame(width: size.width, height: size.height, alignment: .top)
+                .transition(.notchPanel)
             case .peek:
                 OpenContent(model: model, sessions: NotchModel.peekList(sessions), all: sessions)
                     .frame(width: size.width, height: size.height, alignment: .top)
                     .transition(.notchPanel)
             case .expanded:
-                OpenContent(model: model, sessions: sessions, all: sessions)
+                switch model.tab {
+                case .claude:
+                    OpenContent(model: model, sessions: sessions, all: sessions)
+                        .frame(width: size.width, height: size.height, alignment: .top)
+                        .transition(.notchPanel)
+                case .timer:
+                    VStack(spacing: 0) {
+                        PanelHeader(model: model, timer: timer, shelf: shelf, sessions: sessions).frame(height: model.bandHeight)
+                        TimerPage(model: model, timer: timer)
+                    }
                     .frame(width: size.width, height: size.height, alignment: .top)
                     .transition(.notchPanel)
+                case .shelf:
+                    VStack(spacing: 0) {
+                        PanelHeader(model: model, timer: timer, shelf: shelf, sessions: sessions).frame(height: model.bandHeight)
+                        ShelfPage(model: model, shelf: shelf)
+                    }
+                    .frame(width: size.width, height: size.height, alignment: .top)
+                    .transition(.notchPanel)
+                }
             case .detail(let id):
                 DetailContent(model: model, session: sessions.first { $0.id == id })
                     .frame(width: size.width, height: size.height, alignment: .top)
@@ -471,6 +524,7 @@ extension AnyTransition {
 
 struct CollapsedContent: View {
     @ObservedObject var model: NotchModel
+    @ObservedObject var timer: TimerStore
     let sessions: [ClaudeSession]
 
     var body: some View {
@@ -480,13 +534,21 @@ struct CollapsedContent: View {
         let working = sessions.contains { $0.state == .working }
         let active = sessions.filter { $0.state != .idle }
         HStack(spacing: 0) {
-            if !sessions.isEmpty {
-                Spark(color: Palette.color(top), spinning: working, pulsing: top == .needsInput)
-                    .frame(width: 15, height: 15)
-                    .frame(width: ear)
+            if !sessions.isEmpty || model.timerInEar {
+                Group {
+                    if model.timerInEar {
+                        TimerEar(timer: timer)
+                    } else {
+                        Spark(color: Palette.color(top), spinning: working, pulsing: top == .needsInput)
+                            .frame(width: 15, height: 15)
+                    }
+                }
+                .frame(width: ear)
                 Color.clear.frame(width: model.notchWidth)
                 Group {
-                    if active.isEmpty {
+                    if sessions.isEmpty {
+                        if timer.isActive { TimerRing(timer: timer) }
+                    } else if active.isEmpty {
                         Text("\(sessions.count)")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .foregroundStyle(Palette.idle)
@@ -548,53 +610,8 @@ struct OpenContent: View {
     }
 
     private var header: some View {
-        let side = max(0, (model.openWidth - model.notchWidth) / 2)
-        let clearable = all.contains { $0.needsAttention && $0.permission == nil && $0.status == "idle" }
-        return HStack(spacing: 0) {
-            HStack(spacing: 7) {
-                Spark(color: Palette.claude, spinning: all.contains { $0.state == .working })
-                    .frame(width: 13, height: 13)
-                Text("Claude Code")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .fixedSize()
-                if clearable {
-                    Button { model.actions?.clearAll() } label: {
-                        Text("Clear")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.7))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.white.opacity(0.1)))
-                            .fixedSize()
-                    }
-                    .buttonStyle(.plain)
-                    .help("Mark finished sessions as seen")
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.leading, 22)
-            .frame(width: side)
-
-            Color.clear.frame(width: model.notchWidth)
-
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                SummaryChips(sessions: all)
-                Button { model.actions?.showMenu() } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.trailing, 16)
-            .frame(width: side)
-        }
+        PanelHeader(model: model, timer: model.timer, shelf: model.shelf, sessions: all)
     }
-
 }
 
 /// "● 1  ● 2  ● 1" — how many sessions are in each state, in their colours.

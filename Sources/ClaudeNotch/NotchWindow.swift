@@ -78,6 +78,8 @@ protocol AppActions: AnyObject {
 final class NotchController: NotchActions {
     let screen: NSScreen
     let store: SessionStore
+    let timer: TimerStore
+    let shelf: ShelfStore
     let model: NotchModel
     let panel: NotchPanel
     private weak var app: AppActions?
@@ -100,19 +102,22 @@ final class NotchController: NotchActions {
     private static let leaveDelay: TimeInterval = 0.22
     private static let peekDuration: TimeInterval = 4
 
-    init(screen: NSScreen, store: SessionStore, app: AppActions) {
+    init(screen: NSScreen, store: SessionStore, timer: TimerStore, shelf: ShelfStore, app: AppActions) {
         self.screen = screen
         self.store = store
+        self.timer = timer
+        self.shelf = shelf
         self.app = app
         geometry = NotchGeometry(screen: screen)
-        model = NotchModel(hasNotch: geometry.hasNotch, notchWidth: geometry.width, notchHeight: geometry.height)
+        model = NotchModel(hasNotch: geometry.hasNotch, notchWidth: geometry.width, notchHeight: geometry.height,
+                           timer: timer, shelf: shelf)
 
         let maxBody = model.maxBodySize
         let size = NSSize(width: maxBody.width + 2 * shadowPad, height: maxBody.height + shadowPad)
         let frame = NSRect(x: geometry.midX - size.width / 2, y: geometry.top - size.height, width: size.width, height: size.height)
         panel = NotchPanel(frame: frame)
 
-        let host = NotchHostingView(rootView: NotchRootView(store: store, model: model))
+        let host = NotchHostingView(rootView: NotchRootView(store: store, model: model, timer: timer, shelf: shelf))
         host.sizingOptions = []
         host.menuProvider = { [weak app] in app?.makeMenu() ?? NSMenu() }
         container = NotchContainerView(frame: NSRect(origin: .zero, size: size), host: host)
@@ -121,11 +126,33 @@ final class NotchController: NotchActions {
         panel.orderFrontRegardless()
         model.actions = self
 
-        // The shape follows the mode and the session list; Core Animation does the moving.
+        // Things dragged onto the notch land on the shelf.
+        container.onDragTarget = { [weak self] targeted in
+            guard let self else { return }
+            self.model.dropTargeted = targeted
+            if targeted, self.model.tab != .shelf { self.model.tab = .shelf }
+        }
+        container.onDrop = { [weak self] pasteboard in self?.drop(pasteboard) ?? false }
+
+        // The shape follows whatever changes its size (mode, tab, sessions, timer, shelf), one run-loop
+        // turn later so the new values are in place; Core Animation does the moving.
         reshape(mode: model.mode, sessions: store.sessions, animated: false)
-        model.$mode.combineLatest(store.$sessions)
-            .sink { [weak self] mode, sessions in self?.reshape(mode: mode, sessions: sessions, animated: true) }
+        Publishers.Merge4(model.objectWillChange.map { _ in () }, store.$sessions.map { _ in () },
+                          timer.objectWillChange.map { _ in () }, shelf.objectWillChange.map { _ in () })
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in
+                guard let self else { return }
+                self.reshape(mode: self.model.mode, sessions: self.store.sessions, animated: true)
+            }
             .store(in: &bag)
+    }
+
+    @discardableResult
+    func drop(_ pasteboard: NSPasteboard) -> Bool {
+        let added = shelf.add(from: pasteboard, source: NSWorkspace.shared.frontmostApplication?.localizedName)
+        model.dropTargeted = false
+        model.tab = .shelf
+        return added > 0
     }
 
     private func reshape(mode: NotchModel.Mode, sessions: [ClaudeSession], animated: Bool) {
@@ -142,6 +169,10 @@ final class NotchController: NotchActions {
 
     #if DEBUG
     var debugShapeLayer: CAShapeLayer? { container.debugShapeLayer }
+    /// Keeps an open notch open without the pointer on it, for screenshots.
+    static var debugHold = false
+    #else
+    static let debugHold = false
     #endif
 
     /// Re-check the pointer once a hover or leave delay has passed (mouse events alone may not come).
@@ -169,7 +200,11 @@ final class NotchController: NotchActions {
 
     // MARK: - Pointer and keyboard
 
-    func update(mouse p: NSPoint, now: Date = Date()) {
+    func update(mouse p: NSPoint, now: Date = Date(), dragging: Bool = false, buttonDown: Bool = false) {
+        // Something is being dragged towards the notch: open the shelf as a drop target.
+        if dragging, detailID == nil, model.mode != .expanded || model.tab != .shelf, dropZone.contains(p) {
+            openForDrop()
+        }
         let body = bodyRect
         let inside: Bool
         if body.width <= 0 {
@@ -198,13 +233,23 @@ final class NotchController: NotchActions {
                 if !inside { peekArmed = true }
                 panel.ignoresMouseEvents = true
             } else if inside {
+                model.tab = .claude
                 return open()
             }
             // A notification: a few seconds, then back into the notch. The coloured dot stays until you look.
             if let until = peekUntil, now >= until { collapse() }
+        case .timerPeek:
+            // Same few seconds, but its buttons work once you reach for them, and it waits while you do.
+            if !peekArmed {
+                if !inside { peekArmed = true }
+                panel.ignoresMouseEvents = true
+            } else if inside {
+                peekUntil = max(peekUntil ?? now, now.addingTimeInterval(1.5))
+            }
+            if let until = peekUntil, now >= until { collapse() }
         case .expanded:
-            if inside {
-                leaveStart = nil
+            if inside || buttonDown || Self.debugHold {
+                leaveStart = nil // never close under you mid-drag
             } else {
                 if leaveStart == nil { leaveStart = now; recheck(after: Self.leaveDelay) }
                 if let start = leaveStart, now.timeIntervalSince(start) >= Self.leaveDelay { collapse() }
@@ -220,6 +265,26 @@ final class NotchController: NotchActions {
         collapse(restoreFocus: false) // the click itself brings its app forward
     }
 
+    /// Generous area around the notch where a drag opens the shelf.
+    private var dropZone: NSRect {
+        let reach: CGFloat = 70
+        let half = max(model.bodySize(store.sessions, mode: .collapsed).width / 2, geometry.width / 2, 110) + reach
+        return NSRect(x: geometry.midX - half, y: geometry.top - geometry.height - reach, width: 2 * half, height: geometry.height + reach)
+    }
+
+    func openForDrop() {
+        guard detailID == nil else { return }
+        model.tab = .shelf
+        model.mode = .expanded
+        leaveStart = nil
+        peekUntil = nil
+    }
+
+    /// The mouse button went up after a drag: whatever wasn't dropped is gone, so stop highlighting.
+    func dragEnded() {
+        model.dropTargeted = false
+    }
+
     func keyDown(_ event: NSEvent) -> Bool {
         guard detailID != nil, event.keyCode == 53 else { return false } // Esc
         back()
@@ -233,6 +298,16 @@ final class NotchController: NotchActions {
         model.mode = .expanded
         leaveStart = nil
         peekUntil = nil
+    }
+
+    /// The timer's 4-second pop-up.
+    func peekTimer(_ event: TimerStore.Finish) {
+        guard [.collapsed, .peek, .timerPeek].contains(model.mode) else { return }
+        model.timerEvent = event
+        model.mode = .timerPeek
+        peekUntil = Date().addingTimeInterval(Self.peekDuration)
+        peekArmed = !bodyRect.insetBy(dx: -8, dy: -8).contains(NSEvent.mouseLocation)
+        recheck(after: Self.peekDuration)
     }
 
     func peek() {
@@ -330,6 +405,11 @@ final class NotchController: NotchActions {
     func newSession() {
         collapse(restoreFocus: false)
         Jumper.newSession()
+    }
+
+    func select(_ tab: NotchModel.Tab) {
+        model.tab = tab
+        if model.mode != .expanded { model.mode = .expanded; leaveStart = nil; peekUntil = nil }
     }
 
     func showMenu() {

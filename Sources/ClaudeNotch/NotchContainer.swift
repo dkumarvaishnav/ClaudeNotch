@@ -31,6 +31,35 @@ final class NotchContainerView: NSView {
         host.frame = clip.bounds
         host.autoresizingMask = [.width, .height]
         clip.addSubview(host)
+
+        registerForDraggedTypes([.fileURL, .URL, .string, .png, .tiff])
+    }
+
+    // MARK: - Drops onto the notch (they land on the shelf)
+
+    var onDragTarget: ((Bool) -> Void)?
+    var onDrop: ((NSPasteboard) -> Bool)?
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingSource == nil else { return [] } // dragging something out of the shelf
+        onDragTarget?(true)
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        sender.draggingSource == nil ? .copy : []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onDragTarget?(false)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        onDrop?(sender.draggingPasteboard) ?? false
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        onDragTarget?(false)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }

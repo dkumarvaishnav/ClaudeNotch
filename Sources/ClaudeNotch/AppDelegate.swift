@@ -34,6 +34,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
     #else
     private let store = SessionStore()
     #endif
+    #if DEBUG
+    // Debug builds keep their own timer and shelf, and a private pasteboard, so tests never touch yours.
+    private let timer = TimerStore(defaults: UserDefaults(suiteName: "ClaudeNotchDebug") ?? .standard)
+    private let shelf = ShelfStore(pasteboard: NSPasteboard(name: .init("ClaudeNotchDebug")),
+                                   defaults: UserDefaults(suiteName: "ClaudeNotchDebug") ?? .standard)
+    #else
+    private let timer = TimerStore()
+    private let shelf = ShelfStore()
+    #endif
+    private let dragPasteboard = NSPasteboard(name: .drag)
+    private lazy var dragBaseline = dragPasteboard.changeCount
+    private var draggingContent = false
     private let server = HookServer()
     private lazy var hub = HookHub(token: HookInstaller.token())
     private var controllers: [NotchController] = []
@@ -65,6 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] event in self?.handle(event) }
             .store(in: &bag)
+        timer.finished
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] event in self?.handle(event) }
+            .store(in: &bag)
         // Requests answered in the app or terminal are let go as soon as the session moves on.
         store.$sessions
             .receive(on: DispatchQueue.main)
@@ -88,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
         #if DEBUG
         // Remote control for testing. Opt-in, since any local process could post these notifications.
         if ProcessInfo.processInfo.environment["CLAUDENOTCH_DEBUG"] == "1" {
-            DebugHooks.install(controllers: { [weak self] in self?.controllers ?? [] }, store: store, app: self)
+            DebugHooks.install(controllers: { [weak self] in self?.controllers ?? [] }, store: store, timer: timer, shelf: shelf, app: self)
         }
         #endif
     }
@@ -100,7 +116,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
     private func trackMouse() {
         let p = NSEvent.mouseLocation
         let now = Date()
-        controllers.forEach { $0.update(mouse: p, now: now) }
+        // A drag carrying content (a file, an image, text) writes to the drag pasteboard when it starts;
+        // reading its change counter is free and touches nothing private.
+        let buttonDown = NSEvent.pressedMouseButtons & 1 != 0
+        let dragCount = dragPasteboard.changeCount
+        if !buttonDown {
+            if draggingContent {
+                draggingContent = false
+                controllers.forEach { $0.dragEnded() }
+            }
+            dragBaseline = dragCount
+        } else if !draggingContent, dragCount != dragBaseline {
+            draggingContent = true
+        }
+        controllers.forEach { $0.update(mouse: p, now: now, dragging: draggingContent, buttonDown: buttonDown) }
     }
 
     private func rebuildPanels() {
@@ -112,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
             let notched = NSScreen.screens.first { $0.safeAreaInsets.top > 0 }
             screens = [notched ?? NSScreen.main].compactMap { $0 }
         }
-        controllers = screens.map { NotchController(screen: $0, store: store, app: self) }
+        controllers = screens.map { NotchController(screen: $0, store: store, timer: timer, shelf: shelf, app: self) }
     }
 
     private func handle(_ event: SessionEvent) {
@@ -134,6 +163,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
         let p = NSEvent.mouseLocation
         let target = controllers.first { NSMouseInRect(p, $0.screen.frame, false) } ?? controllers.first
         target?.peek()
+    }
+
+    private func handle(_ event: TimerStore.Finish) {
+        if Settings.sounds {
+            if case .breakOver = event { NSSound(named: "Submarine")?.play() } else { NSSound(named: "Hero")?.play() }
+        }
+        // Timers always say so (that's what they're for), on the display under the pointer.
+        let p = NSEvent.mouseLocation
+        let target = controllers.first { NSMouseInRect(p, $0.screen.frame, false) } ?? controllers.first
+        target?.peekTimer(event)
     }
 
     // MARK: - Hooks
@@ -207,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
             warning.isEnabled = false
             menu.addItem(warning)
         }
+        menu.addItem(item("Clipboard History on the Shelf", #selector(toggleHistory), on: shelf.historyOn))
         menu.addItem(item("Play Sounds", #selector(toggleSounds), on: Settings.sounds))
         menu.addItem(item("Pop Open on Updates", #selector(togglePeek), on: Settings.peek))
         menu.addItem(item("Show on All Displays", #selector(toggleDisplays), on: Settings.allDisplays))
@@ -225,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppActions {
 
     @objc private func newSession() { Jumper.newSession() }
     @objc private func toggleSounds() { Settings.sounds.toggle() }
+    @objc private func toggleHistory() { shelf.setHistory(!shelf.historyOn) }
     @objc private func togglePeek() { Settings.peek.toggle() }
     @objc private func toggleDisplays() { Settings.allDisplays.toggle(); rebuildPanels() }
     @objc private func quit() { NSApp.terminate(nil) }

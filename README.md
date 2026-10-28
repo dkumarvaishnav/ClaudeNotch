@@ -1,6 +1,6 @@
 # ClaudeNotch
 
-Your Claude Code sessions in the MacBook notch: see them, approve them, answer them, and tell them what to do next, from any app or screen. Inspired by [TwoCode](https://github.com/levon-z/TwoCode) (a Dynamic Island for Windows), rebuilt natively for macOS.
+Your Claude Code sessions in the MacBook notch: see them, approve them, answer them, and tell them what to do next, from any app or screen. Plus a timer, Pomodoro, and a shelf for carrying files and text between apps and Spaces. Inspired by [TwoCode](https://github.com/levon-z/TwoCode) (a Dynamic Island for Windows), rebuilt natively for macOS.
 
 It floats above the menu bar on every Space, over full-screen apps, and on every display (screens without a notch get a virtual one). Opening and closing run as Core Animation springs in the render server, at 120 fps on ProMotion displays.
 
@@ -22,6 +22,21 @@ It floats above the menu bar on every Space, over full-screen apps, and on every
 - ⚪ **Grey, nothing new.**
 
 When a session finishes, fails or needs you, the notch pops open for 4 seconds and folds back by itself. The coloured dot stays, so you can walk away and still see it from across the room. Hovering doesn't clear colours either. A session goes grey once you open it, reply, click ✕ / **Mark as seen** / **Clear**, or start a new turn.
+
+## Timer, Pomodoro and the shelf
+
+The open notch has three tabs: **Claude**, **Timer** and **Shelf**.
+
+| | |
+| --- | --- |
+| ![timer](docs/timer.png) | **Timer.** Pick a preset or nudge it with − / +, then Start. Pause, resume or reset any time. |
+| ![pomodoro](docs/pomodoro.png) | **Pomodoro.** 25 min focus, 5 min break, a 15 min break after 4 rounds. Breaks start by themselves; the next focus round waits for you. **Done early** and **Skip break** move on. |
+| ![countdown](docs/ear-timer.png) | **Beside the notch.** While a countdown runs, it sits to the left of the notch (blue for focus, mint for breaks) and your session dots stay on the right. When it ends you hear a chime and get a 4-second pop-up. |
+| ![shelf](docs/shelf.png) | **Shelf.** Drag files, images, links or text onto the notch from any app; it opens as a drop target. Switch Space or app, then drag them back out, or click one to copy it. **Paste** adds what you copied last. Files stay where they are (the shelf keeps a reference), and the shelf empties when ClaudeNotch quits. |
+
+**Clipboard history** (the **History** button, off by default) adds everything you copy to the shelf. macOS asks before an app reads what you copy, so it only records once you set ClaudeNotch to **Allow** under **System Settings → Privacy & Security → Paste from Other Apps**. The **Allow…** button takes you there. Items that password managers mark as private are never recorded.
+
+Timers survive a restart of the app; a countdown that ran out while it was closed just ends.
 
 ## Install
 
@@ -49,9 +64,10 @@ Either way, right-click the notch → **Launch at Login** to keep it running. On
 
 ## Use it
 
-- **Hover** the notch to open the list. Move away to close it.
+- **Hover** the notch to open it, then pick **Claude**, **Timer** or **Shelf** at the top left. Move away to close it.
+- **Drag** something to the notch to park it on the shelf.
 - **Click a session** for its detail card. It stays open while you read or type, and closes with **Esc**, ✕, or a click outside. **Open ↗** jumps to the session in the Claude desktop app, or brings its terminal or editor to the front.
-- **Right-click** the notch (or click `…`) for settings: Allow/Deny & Reply, sounds, pop-ups, all displays, launch at login, quit.
+- **Right-click** the notch (or click `…`) for settings: Allow/Deny & Reply, clipboard history, sounds, pop-ups, all displays, launch at login, quit.
 
 ## How it works
 
@@ -98,7 +114,7 @@ If you delete the app without step 1, the hooks stay in `settings.json`. They do
 
 ```bash
 swift build      # debug build (app + helper)
-swift test       # unit tests: settings.json editing, transcript parsing, request details
+swift test       # unit tests: settings.json editing, transcripts, request details, timer, shelf
 ./package.sh     # dist/ClaudeNotch-<version>.dmg: universal (Apple silicon + Intel), ad-hoc signed
 swift tools/make-icon.swift   # redraw Resources/AppIcon.icns
 ```
@@ -109,6 +125,8 @@ With an Apple Developer ID, `package.sh` can also sign and notarize the disk ima
 CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=claudenotch ./package.sh
 ```
 
+If the project lives in an iCloud-synced folder (like Desktop), iCloud tags the test bundle and `codesign` refuses it. Build the tests elsewhere: `swift test --scratch-path /tmp/claudenotch-build`.
+
 The version comes from `CFBundleShortVersionString` in `Resources/Info.plist`.
 
 Debug builds have test tools that release builds leave out:
@@ -118,6 +136,9 @@ Debug builds have test tools that release builds leave out:
 - `CLAUDENOTCH_DEBUG=1` turns on the `ClaudeNotch.debug` distributed notification. Commands:
   - `expand`, `peek`, `collapse`, `detail[:id]`
   - `allow`, `deny`, `answer:<option>`, `reply:<text>`
+  - `tab:claude|timer|shelf`, `hold` / `release` (keep the open notch open for screenshots)
+  - `timer:<seconds>`, `pomodoro`, `pause`, `resume`, `skip`, `finish`, `reset`, `timer-state`
+  - `shelf:text:<text>`, `shelf:file:<path>`, `shelf:image:<png>` (dropped through the same path as a real drag), `droptarget`, `history`, `shelf-state`
   - `shot:<file.png>`: a window-server capture
   - `film:<prefix>,expand|collapse`: frames mid-animation
   - `measure`: the frame rate of one open or close
@@ -133,6 +154,9 @@ Debug builds have test tools that release builds leave out:
 | `HookProtocol/HookAuth.swift` | Signing shared by the app and the helper |
 | `ClaudeNotchHook/main.swift` | The helper Claude Code runs |
 | `NotchViews.swift` | SwiftUI: list, detail card (approve, answer, review plan, reply) |
+| `ModuleViews.swift` | SwiftUI: tab header, timer and Pomodoro pages, countdown beside the notch, shelf |
+| `TimerStore.swift` | Timer and Pomodoro: one end date, one one-shot alarm, saved across restarts |
+| `ShelfStore.swift` | Shelf items, drops, copy back, drag out, opt-in clipboard history |
 | `NotchContainer.swift` | The notch shape, shadow and content mask, animated with Core Animation springs |
 | `NotchWindow.swift` | The panel above the menu bar; hover, pop-up, detail and focus handling |
 | `AppDelegate.swift` | Displays, mouse/keyboard, sounds, menu, settings |

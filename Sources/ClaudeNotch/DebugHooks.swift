@@ -9,7 +9,8 @@ import AppKit
 enum DebugHooks {
     private static var observer: NSObjectProtocol?
 
-    static func install(controllers: @escaping () -> [NotchController], store: SessionStore, app: AppActions) {
+    static func install(controllers: @escaping () -> [NotchController], store: SessionStore, timer: TimerStore,
+                        shelf: ShelfStore, app: AppActions) {
         observer = DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("ClaudeNotch.debug"), object: nil, queue: .main
         ) { note in
@@ -20,12 +21,44 @@ enum DebugHooks {
             let target = store.sessions.first { $0.permission != nil } ?? first
             switch command {
             case "expand": all.forEach { $0.open() }
+            case "hold": NotchController.debugHold = true
+            case "release": NotchController.debugHold = false
+            case "tab:claude": all.first?.select(.claude)
+            case "tab:timer": all.first?.select(.timer)
+            case "tab:shelf": all.first?.select(.shelf)
+            case "pomodoro": timer.page = .pomodoro; timer.startFocus()
+            case "pause": timer.pause()
+            case "resume": timer.resume()
+            case "skip": timer.skip()
+            case "finish": timer.complete(silently: false)   // as if time ran out: alert + pop-up
+            case "reset": timer.reset()
+            case "droptarget": all.first?.openForDrop(); all.first?.model.dropTargeted = true
+            case "history": shelf.setHistory(!shelf.historyOn)
+            case "timer-state":
+                NSLog("timer kind=\(timer.kind) run=\(timer.run) clock=\(timer.clock()) rounds=\(timer.focusRounds) awaiting=\(timer.awaitingFocus)")
+            case "shelf-state":
+                NSLog("shelf \(shelf.items.count) items: \(shelf.items.map { "\($0.kindLabel): \($0.title)" }) history=\(shelf.historyOn) allowed=\(shelf.historyAllowed)")
             case "collapse": all.forEach { $0.collapse() }
             case "peek": all.forEach { $0.peek() }
             case "allow": if let p = target?.permission { NSLog("allow → \(app.allow(p, always: false, answers: nil))") }
             case "deny": if let p = target?.permission { NSLog("deny → \(app.deny(p, note: "not now"))") }
             default:
-                if command.hasPrefix("detail") {
+                if command.hasPrefix("timer:"), let seconds = TimeInterval(command.dropFirst(6)) {
+                    timer.page = .timer
+                    timer.begin(.timer, seconds: seconds)
+                } else if command.hasPrefix("shelf:") {
+                    // shelf:text:<text> | shelf:file:<path> | shelf:image:<path> — dropped through the same path as a real drag.
+                    let parts = command.split(separator: ":", maxSplits: 2).map(String.init)
+                    guard parts.count == 3 else { return }
+                    let pb = NSPasteboard(name: .init("ClaudeNotchDebugDrop"))
+                    pb.clearContents()
+                    switch parts[1] {
+                    case "file": pb.writeObjects([URL(fileURLWithPath: parts[2]) as NSURL])
+                    case "image": if let data = try? Data(contentsOf: URL(fileURLWithPath: parts[2])) { pb.setData(data, forType: .png) }
+                    default: pb.setString(parts[2], forType: .string)
+                    }
+                    NSLog("drop → \(all.first?.drop(pb) ?? false)")
+                } else if command.hasPrefix("detail") {
                     let id = command.hasPrefix("detail:") ? String(command.dropFirst(7)) : (target?.id ?? "")
                     if let s = store.sessions.first(where: { $0.id == id }) { all.first?.showDetail(s) }
                 } else if command.hasPrefix("answer:"), let c = all.first, let s = target, let p = s.permission, let q = p.detail.questions.first {

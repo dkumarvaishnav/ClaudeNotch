@@ -27,12 +27,16 @@ enum Snapshot {
         ]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         for (name, mode) in modes {
-            let model = NotchModel(hasNotch: geometry.hasNotch, notchWidth: geometry.width, notchHeight: geometry.height)
+            let timer = TimerStore(defaults: UserDefaults(suiteName: "ClaudeNotchSnapshot") ?? .standard)
+            let shelf = ShelfStore(pasteboard: NSPasteboard(name: .init("ClaudeNotchSnapshot")),
+                                   defaults: UserDefaults(suiteName: "ClaudeNotchSnapshot") ?? .standard)
+            let model = NotchModel(hasNotch: geometry.hasNotch, notchWidth: geometry.width, notchHeight: geometry.height,
+                                   timer: timer, shelf: shelf)
             model.mode = mode
             let size = model.maxBodySize
             let view = ZStack(alignment: .top) {
                 LinearGradient(colors: [Color(white: 0.55), Color(white: 0.35)], startPoint: .top, endPoint: .bottom)
-                NotchRootView(store: store, model: model)
+                NotchRootView(store: store, model: model, timer: timer, shelf: shelf)
             }
             .frame(width: size.width + 80, height: size.height + 40)
 
